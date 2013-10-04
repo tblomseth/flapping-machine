@@ -32,10 +32,16 @@ boolean moveItemStepperIsRunning = false;
 /* Flapping servo */
 int SERVO1_UP = 130;
 int SERVO1_DOWN = 115;
+int lowerTopFlapDelay = 400;
 
 /* Move item stepper */
 int portNo = PORT_3;
 int pulseLength = 30;
+float maxSpeed = 6400.0;
+float acceleration = 38100.0;
+int moveItemInSteps = 10000;
+int pullBackFlapSteps = 750;
+int moveItemOutSteps = -4800;
 
 void setup() {
   // Initailize FSM
@@ -45,13 +51,12 @@ void setup() {
   Serial.begin( 9600 );
 
   // Initialize components
-  baseShield.begin();  
+  baseShield.begin();
   //infraredReceiver.begin();  
   ultraSensor.begin();
 
-  //moveItemStepper.setSpeed( 12 );
-  moveItemStepper.setMaxSpeed( 6400.0 );
-  moveItemStepper.setAcceleration( 38100.0 );
+  moveItemStepper.setMaxSpeed( maxSpeed );
+  moveItemStepper.setAcceleration( acceleration );
 
   servoDriver.Servo1_begin();
 
@@ -108,8 +113,7 @@ delay( 500 );
       Serial.print( "distanceToGo = "); Serial.println( moveItemStepper.distanceToGo() );
       Serial.print( "speed = "); Serial.println( moveItemStepper.speed() );*/
       if ( stopMicroSwitch == HIGH && moveItemStepper.distanceToGo() == 0 ) {
-        //moveItemStepper.step( 100 );
-        moveItemStepper.move( 10000 );
+        moveItemStepper.move( moveItemInSteps );
         Serial.print( "targetPosition = "); Serial.println( moveItemStepper.targetPosition() );
         fsmState = STATE_MOVE_ITEM_IN;
       } else if ( stopMicroSwitch == HIGH && moveItemStepper.distanceToGo() > 0 ) {
@@ -130,7 +134,7 @@ delay( 500 );
     case STATE_PULL_BACK_FLAP: 
       //Serial.println( "PULL BACK FLAP" );
       if ( moveItemStepper.distanceToGo() == 0 && !moveItemStepperIsRunning ) { 
-        moveItemStepper.move( 700 );
+        moveItemStepper.move( pullBackFlapSteps );
         Serial.print( "distanceToGo = "); Serial.println( moveItemStepper.distanceToGo() );
         Serial.print( "targetPosition = "); Serial.println( moveItemStepper.targetPosition() );
         moveItemStepperIsRunning = true;
@@ -149,9 +153,8 @@ delay( 500 );
     case STATE_LOWER_TOP_FLAP:
       Serial.println( "LOWER TOP FLAP" );    
       servoDriver.writeServo1( SERVO1_DOWN );
-      delay( 400 );
+      delay( lowerTopFlapDelay );
       fsmState = STATE_RELEASE_FLAP;
-      //delay( 1000 );
       Serial.println( "->> RELEASE FLAP" ); 
     break;  
     
@@ -163,7 +166,6 @@ delay( 500 );
       } else if ( moveItemStepper.distanceToGo() == 0 && moveItemStepperIsRunning ) {
         moveItemStepperIsRunning = false;
         fsmState = STATE_RAISE_TOP_FLAP;
- //delay( 1000 );       
       } else {
         moveItemStepper.run();
         fsmState = STATE_RELEASE_FLAP;
@@ -174,27 +176,17 @@ delay( 500 );
       Serial.println( "RAISE TOP FLAP" );
       servoDriver.writeServo1( SERVO1_UP );
       fsmState = STATE_MOVE_ITEM_OUT_PHASE_ONE;
-      //delay( 1000 );
       Serial.println( "->> MOVE ITEM OUT PHASE ONE" );
       break;
 
     case STATE_MOVE_ITEM_OUT_PHASE_ONE: 
-
-      //usDistance = ultraSensor.distanceCm();
-      usDistance = -1;
       if ( stopMicroSwitch == LOW && moveItemStepper.distanceToGo() == 0 ) {
-        moveItemStepper.move( -4800 );
-        moveItemStepperIsRunning = true;
+        moveItemStepper.move( moveItemOutSteps );
         fsmState = STATE_MOVE_ITEM_OUT_PHASE_ONE;
       } else if ( moveItemStepper.distanceToGo() != 0) {
         moveItemStepper.run();
         fsmState = STATE_MOVE_ITEM_OUT_PHASE_ONE;
-      /*} else if( usDistance < 10 && moveItemStepperIsRunning == true ) {
-        moveItemStepper.run();
-        fsmState = STATE_MOVE_ITEM_OUT_PHASE_ONE;*/
       } else {
-        /*moveItemStepper.stop();
-        moveItemStepperIsRunning = false;*/
         fsmState = STATE_MOVE_ITEM_OUT_PHASE_TWO;
       }
       break;
