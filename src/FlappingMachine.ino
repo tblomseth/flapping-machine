@@ -1,4 +1,5 @@
-#include <Me_BaseShield.h>
+ #include <Me_BaseShield.h>
+#include <Me_BaseShieldMotorDriver.h>
 #include <Me_InfraredReceiver.h>
 #include <Me_UltrasonicSensor.h>
 #include "MakeblockStepper.h"
@@ -21,27 +22,40 @@
 
 int fsmState;
 
+/* Hardware components */
 Me_BaseShield baseShield;
 Me_InfraredReceiver infraredReceiver; /* Note: As the code need to use interrupt 0, it works only when the Me - Infrared Receiver module is connected to the port 4(PORT_4) of Me - Base Shield. */
 Me_UltrasonicSensor ultraSensor( PORT_5 ); //Ultrasonic module can ONLY be connected to port 3, 4, 5, 6, 7, 8 of base shield. ultraSensor.distanceCm()
 // MakeblockStepper moveItemStepper( 3200, baseShield, PORT_3 );
-Me_ServoDriver servoDriver( PORT_2 ); //can ONLY be PORT_1,PORT_2
-AccelStepper moveItemStepper( forwardstep, backwardstep );
-boolean moveItemStepperIsRunning = false;
+Me_ServoDriver servoDriver( PORT_1 ); //can ONLY be PORT_1,PORT_2
+Me_BaseShieldMotorDriver baseShieldMotorDriver;
 
 /* Flapping servo */
-int SERVO1_UP = 130;
-int SERVO1_DOWN = 115;
-int lowerTopFlapDelay = 400;
+int SERVO1_UP = 133;
+int SERVO1_DOWN = 110;
+int lowerTopFlapDelay = 200;
 
 /* Move item stepper */
 int portNo = PORT_3;
-int pulseLength = 30;
-float maxSpeed = 6400.0;
-float acceleration = 38100.0;
-int moveItemInSteps = 10000;
-int pullBackFlapSteps = 750;
-int moveItemOutSteps = -4800;
+AccelStepper moveItemStepper( forwardstep, backwardstep );
+int MOVE_ITEM_STEPPER_PULSE_LENGTH = 30;
+float MOVE_ITEM_STEPPER_MAX_SPEED = 2500.0;
+float MOVE_ITEM_IN_MAX_SPEED = 2500.0;
+float PULL_BACK_FLAP_MAX_SPEED = 2000.0;
+float MOVE_ITEM_OUT_STEPPER_MAX_SPEED = 2500.0;
+float MOVE_ITEM_STEPPER_ACCELERATION = 30000.0;
+int MOVE_ITEM_IN_STEPS = 10000;
+int PULL_BACK_FLAP_STEPS = 600;
+int MOVE_ITEM_OUT_STEPS = 650;
+boolean moveItemStepperIsRunning = false;
+
+/* Solenoid contact servo */
+int CONTACT_OFF_POSITION = 140;
+int CONTACT_ON_POSITION = 180;
+
+/* Output conveyor motor */
+int OUTPUT_CONVEYANCE_SPEED = -190;
+int OUTPUT_CONVEYANCE_DURATION = 155;
 
 void setup() {
   // Initailize FSM
@@ -55,17 +69,23 @@ void setup() {
   //infraredReceiver.begin();  
   ultraSensor.begin();
 
-  moveItemStepper.setMaxSpeed( maxSpeed );
-  moveItemStepper.setAcceleration( acceleration );
+  moveItemStepper.setMaxSpeed( MOVE_ITEM_STEPPER_MAX_SPEED );
+  moveItemStepper.setAcceleration( MOVE_ITEM_STEPPER_ACCELERATION );
 
   servoDriver.Servo1_begin();
+  servoDriver.Servo2_begin();
 
   /* Servo test */
   servoDriver.writeServo1( SERVO1_UP );
-  delay( 500 );
+  delay( 300 );
   servoDriver.writeServo1( SERVO1_DOWN );
-  delay( 500 );
+  delay( 300 );
   servoDriver.writeServo1( SERVO1_UP ); 
+   
+  servoDriver.writeServo2( CONTACT_OFF_POSITION );
+  servoDriver.writeServo2( CONTACT_ON_POSITION );
+  delay( 300 );
+  servoDriver.writeServo2( CONTACT_OFF_POSITION );
    
   /* Move item stepper test */
   
@@ -73,6 +93,8 @@ void setup() {
   
   Serial.print( "setup: stopMicroSwitch = ");
   Serial.println( baseShield.readMePortOutsidePin( PORT_8 ) );
+  
+  baseShieldMotorDriver.begin();
   
 }
 
@@ -113,7 +135,8 @@ delay( 500 );
       Serial.print( "distanceToGo = "); Serial.println( moveItemStepper.distanceToGo() );
       Serial.print( "speed = "); Serial.println( moveItemStepper.speed() );*/
       if ( stopMicroSwitch == HIGH && moveItemStepper.distanceToGo() == 0 ) {
-        moveItemStepper.move( moveItemInSteps );
+        moveItemStepper.setMaxSpeed( MOVE_ITEM_IN_MAX_SPEED );
+        moveItemStepper.move( MOVE_ITEM_IN_STEPS );
         Serial.print( "targetPosition = "); Serial.println( moveItemStepper.targetPosition() );
         fsmState = STATE_MOVE_ITEM_IN;
       } else if ( stopMicroSwitch == HIGH && moveItemStepper.distanceToGo() > 0 ) {
@@ -133,8 +156,9 @@ delay( 500 );
       
     case STATE_PULL_BACK_FLAP: 
       //Serial.println( "PULL BACK FLAP" );
-      if ( moveItemStepper.distanceToGo() == 0 && !moveItemStepperIsRunning ) { 
-        moveItemStepper.move( pullBackFlapSteps );
+      if ( moveItemStepper.distanceToGo() == 0 && !moveItemStepperIsRunning ) {
+        moveItemStepper.setMaxSpeed( PULL_BACK_FLAP_MAX_SPEED ); 
+        moveItemStepper.move( PULL_BACK_FLAP_STEPS );
         Serial.print( "distanceToGo = "); Serial.println( moveItemStepper.distanceToGo() );
         Serial.print( "targetPosition = "); Serial.println( moveItemStepper.targetPosition() );
         moveItemStepperIsRunning = true;
@@ -180,19 +204,29 @@ delay( 500 );
       break;
 
     case STATE_MOVE_ITEM_OUT_PHASE_ONE: 
-      if ( stopMicroSwitch == LOW && moveItemStepper.distanceToGo() == 0 ) {
-        moveItemStepper.move( moveItemOutSteps );
+      if (stopMicroSwitch == LOW && !moveItemStepperIsRunning && moveItemStepper.distanceToGo() == 0 ) {
+        servoDriver.writeServo2( CONTACT_ON_POSITION );
+        delay( 100 ); // In order to not putting to much pressure from the side on the solenoids
+        moveItemStepper.setMaxSpeed( MOVE_ITEM_OUT_STEPPER_MAX_SPEED );
+        moveItemStepper.move( MOVE_ITEM_OUT_STEPS );
+        moveItemStepperIsRunning = true;
+        baseShieldMotorDriver.runMotor1( OUTPUT_CONVEYANCE_SPEED );
         fsmState = STATE_MOVE_ITEM_OUT_PHASE_ONE;
       } else if ( moveItemStepper.distanceToGo() != 0) {
         moveItemStepper.run();
         fsmState = STATE_MOVE_ITEM_OUT_PHASE_ONE;
       } else {
+        moveItemStepperIsRunning = false;
         fsmState = STATE_MOVE_ITEM_OUT_PHASE_TWO;
       }
       break;
 
     case STATE_MOVE_ITEM_OUT_PHASE_TWO: 
       Serial.println( "MOVE ITEM OUT PHASE TWO" );
+        delay( OUTPUT_CONVEYANCE_DURATION );
+        baseShieldMotorDriver.stopMotor1();
+        servoDriver.writeServo2( CONTACT_OFF_POSITION );
+        
       //if ( usDistance > 10 ) {
         //moveItemStepper.step( -600 );
         //moveItemStepper.move( -600 );
@@ -211,21 +245,21 @@ delay( 500 );
 
 void forwardstep() { 
   baseShield.setMePort(portNo, LOW, HIGH);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
   baseShield.setMePort(portNo, HIGH, HIGH);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
   baseShield.setMePort(portNo, HIGH, LOW);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
   baseShield.setMePort(portNo, LOW, LOW);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
 }
 void backwardstep() { 
   baseShield.setMePort(portNo, LOW, LOW);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
   baseShield.setMePort(portNo, HIGH, LOW);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
   baseShield.setMePort(portNo, HIGH, HIGH);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
   baseShield.setMePort(portNo, LOW, HIGH);
-  delayMicroseconds( pulseLength );
+  delayMicroseconds( MOVE_ITEM_STEPPER_PULSE_LENGTH );
 }
